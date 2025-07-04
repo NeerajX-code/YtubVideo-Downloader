@@ -10,6 +10,8 @@ const { pipeline } = require("stream");
 
 const rateLimit = require("express-rate-limit");
 
+require("dotenv").config();
+
 // Global limiter (apply to all routes)
 const globalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,  // 1 minute
@@ -34,11 +36,6 @@ const infoLimiter = rateLimit({
 });
 
 
-
-
-
-require("dotenv").config();
-
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
@@ -49,8 +46,11 @@ app.use(express.static(path.join(__dirname, "public")));
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
+
 // Apply global limiter to all routes
 app.use(globalLimiter);
+app.set("trust proxy", 1);
+
 
 const QUALITY_MAP = {
   360: { itag: "18", videoAndAudio: true },
