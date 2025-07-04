@@ -8,6 +8,35 @@ const path = require("path");
 const cors = require("cors");
 const { pipeline } = require("stream");
 
+const rateLimit = require("express-rate-limit");
+
+// Global limiter (apply to all routes)
+const globalLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,  // 1 minute
+  max: 100,                 // Max 100 requests per IP per minute
+  standardHeaders: true,   // Return rate limit info in headers
+  legacyHeaders: false,    // Disable `X-RateLimit-*` headers
+});
+
+// Specific tighter limiter for downloads
+const downloadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 10,                   // Max 10 downloads per IP per 15 minutes
+  message: "Too many downloads from this IP, please try again later.",
+});
+
+const infoLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100,            // Max 100 requests per IP
+  message: "Too many requests to /info, please try again in a minute.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply global limiter to all routes
+app.use(globalLimiter);
+
+
 
 require("dotenv").config();
 
@@ -43,7 +72,7 @@ app.get("/", (req, res) => {
   res.render("index");
 });
 
-app.get("/info", async (req, res) => {
+app.get("/info",infoLimiter, async (req, res) => {
   try {
     const rawUrl = normalizeYouTubeUrl(req.query.url);
     if (!ytdl.validateURL(rawUrl)) return res.status(400).send("Invalid URL");
@@ -65,7 +94,7 @@ app.get("/info", async (req, res) => {
   }
 });
 
-app.get("/download", async (req, res) => {
+app.get("/download",downloadLimiter, async (req, res) => {
   try {
     const rawUrl = normalizeYouTubeUrl(req.query.url);
     const itag = req.query.quality;
