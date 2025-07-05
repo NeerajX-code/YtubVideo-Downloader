@@ -80,23 +80,35 @@ app.get("/", (req, res) => {
 
 app.get("/info", infoLimiter, async (req, res) => {
   try {
-    const rawUrl = decodeURIComponent(req.query.url);
-    const url = normalizeYouTubeUrl(rawUrl);
-    if (!ytdl.validateURL(url)) return res.status(400).send("Invalid URL");
+    const decodedUrl = decodeURIComponent(req.query.url);
+    const rawUrl = normalizeYouTubeUrl(decodedUrl);
 
-    const info = await ytdl.getInfo(url);
+    console.log("🔍 Decoded URL:", decodedUrl);
+    console.log("🔍 Normalized URL:", rawUrl);
+
+    if (!ytdl.validateURL(rawUrl)) {
+      console.log("❌ Invalid YouTube URL:", rawUrl);
+      return res.status(400).send("Invalid YouTube URL");
+    }
+
+    const info = await ytdl.getInfo(rawUrl);
     const details = info.videoDetails;
 
-    res.json({
+    const videoInfo = {
       title: details.title,
       thumbnail: details.thumbnails.at(-1)?.url,
       channel: details.author.name,
       duration: `${Math.floor(details.lengthSeconds / 60)}:${
         details.lengthSeconds % 60
       }`,
-    });
+    };
+
+    console.log("✅ Video Info Fetched:", videoInfo.title);
+
+    res.json(videoInfo);
+
   } catch (err) {
-    console.error("/info error:", err);
+    console.error("❌ /info error:", err);
     res.status(500).send("Failed to fetch video info");
   }
 });
@@ -105,73 +117,82 @@ app.get("/info", infoLimiter, async (req, res) => {
 
 app.get("/download", downloadLimiter, async (req, res) => {
   try {
-    const rawUrl = decodeURIComponent(req.query.url);
-    const url = normalizeYouTubeUrl(rawUrl);
-    console.log("Decoded URL:", decodedUrl);
-    console.log("Normalized URL:", rawUrl);
+    const decodedUrl = decodeURIComponent(req.query.url);
+    const rawUrl = normalizeYouTubeUrl(decodedUrl);
     const itag = req.query.quality;
     const type = req.query.type || "video";
 
-    if (!ytdl.validateURL(url))
-      return res.status(400).json({
-    message:"Invalid Message",
-    decodedUrl:rawUrl,
-    cleanUrl:url
-  });
+    console.log("▶️ Decoded URL:", decodedUrl);
+    console.log("▶️ Normalized URL:", rawUrl);
+    console.log("▶️ Itag:", itag, "| Type:", type);
 
-    const info = await ytdl.getInfo(url);
-    const title = sanitize(info.videoDetails.title);
-    const format = info.formats.find((f) => f.itag.toString() === itag);
+    if (!ytdl.validateURL(rawUrl)) {
+      console.log("❌ Invalid YouTube URL:", rawUrl);
+      return res.status(400).send("Invalid YouTube URL");
+    }
 
-    if (!format && type !== "audio")
+    const info = await ytdl.getInfo(rawUrl);
+    const format = info.formats.find(f => f.itag.toString() === itag);
+
+    if (!format && type !== "audio") {
+      console.log("❌ Unsupported quality/itag:", itag);
       return res.status(400).send("Unsupported quality or itag.");
+    }
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=\"${title}.${type === "audio" ? "mp3" : "mp4"}\"`
-    );
+    const title = sanitize(info.videoDetails.title);
+    res.setHeader("Content-Disposition", `attachment; filename="${title}.${type === 'audio' ? 'mp3' : 'mp4'}"`);
 
     const tempDir = path.resolve(__dirname, "temp");
     fs.mkdirSync(tempDir, { recursive: true });
 
+    // ============ AUDIO-ONLY ============
     if (type === "audio") {
-      const audioStream = ytdl(url, {
-        filter: "audioonly",
-        quality: "highestaudio",
-      });
+      console.log("🎵 Starting audio-only stream...");
+      const audioStream = ytdl(rawUrl, { filter: "audioonly", quality: "highestaudio" });
       res.setHeader("Content-Type", "audio/mpeg");
       return pipeline(audioStream, res, (err) => {
-        if (err) console.error("Audio stream error:", err);
+        if (err) console.error("❌ Audio stream error:", err);
       });
     }
 
+    // ============ DIRECT VIDEO (with audio) ============
     if (format.hasVideo && format.hasAudio) {
-      const stream = ytdl(url, { quality: itag });
+      console.log("📼 Direct video+audio stream...");
+      const stream = ytdl(rawUrl, { quality: itag });
       res.setHeader("Content-Type", "video/mp4");
       return pipeline(stream, res, (err) => {
-        if (err) console.error("Video stream error:", err);
+        if (err) console.error("❌ Video stream error:", err);
       });
     }
+
+    // ============ 1080p Merge (Separate Video + Audio) ============
+    console.log("⚙️ Starting video+audio merge with ffmpeg...");
 
     const unique = Date.now() + "_" + Math.floor(Math.random() * 10000);
     const videoPath = path.join(tempDir, `${title}_${unique}_video.mp4`);
     const audioPath = path.join(tempDir, `${title}_${unique}_audio.mp3`);
     const outputPath = path.join(tempDir, `${title}_${unique}_merged.mp4`);
 
-    await Promise.all([
-      new Promise((res, rej) =>
-        ytdl(url, { quality: itag })
-          .pipe(fs.createWriteStream(videoPath))
-          .on("finish", res)
-          .on("error", rej)
-      ),
-      new Promise((res, rej) =>
-        ytdl(url, { filter: "audioonly" })
-          .pipe(fs.createWriteStream(audioPath))
-          .on("finish", res)
-          .on("error", rej)
-      ),
-    ]);
+    try {
+      await Promise.all([
+        new Promise((res, rej) =>
+          ytdl(rawUrl, { quality: itag })
+            .pipe(fs.createWriteStream(videoPath))
+            .on("finish", res)
+            .on("error", rej)
+        ),
+        new Promise((res, rej) =>
+          ytdl(rawUrl, { filter: "audioonly" })
+            .pipe(fs.createWriteStream(audioPath))
+            .on("finish", res)
+            .on("error", rej)
+        ),
+      ]);
+      console.log("✅ Video and audio downloaded successfully.");
+    } catch (err) {
+      console.error("❌ Download stream error:", err);
+      return res.status(500).send("Failed to download video or audio stream.");
+    }
 
     ffmpeg()
       .input(videoPath)
@@ -187,24 +208,22 @@ app.get("/download", downloadLimiter, async (req, res) => {
 
         const readStream = fs.createReadStream(outputPath);
         pipeline(readStream, res, (err) => {
-          [videoPath, audioPath, outputPath].forEach(
-            (p) => fs.existsSync(p) && fs.unlinkSync(p)
-          );
-          if (err) console.error("Streaming final video failed:", err);
+          [videoPath, audioPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+          if (err) console.error("❌ Streaming merged video error:", err);
         });
       })
       .on("error", (err) => {
-        console.error("FFmpeg error:", err);
-        [videoPath, audioPath, outputPath].forEach(
-          (p) => fs.existsSync(p) && fs.unlinkSync(p)
-        );
-        res.status(500).send("Failed to merge video and audio");
+        console.error("❌ FFmpeg merge error:", err);
+        [videoPath, audioPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+        res.status(500).send("Failed to merge video and audio.");
       });
+
   } catch (err) {
-    console.error("/download error:", err);
+    console.error("❌ /download error:", err);
     res.status(500).send("Server error during download");
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`\u{1F680} Server running at http://localhost:${PORT}`);

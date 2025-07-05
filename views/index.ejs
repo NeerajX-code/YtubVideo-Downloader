@@ -266,37 +266,43 @@
     }
 
     async function fetchInfo() {
-      const url = document.getElementById('url').value;
+      const url = document.getElementById('url').value.trim();
       const spinner = document.getElementById('spinner');
       const preview = document.getElementById('preview');
       const errorBox = document.getElementById('errorBox');
 
       if (!url) return;
 
+      // Reset states
       spinner.style.display = 'block';
       errorBox.style.display = 'none';
+      preview.style.display = 'none';
 
       try {
-        const backend = "https://videodownloader-im1g.onrender.com";
+        const backend =
+          location.hostname === "localhost"
+            ? "http://localhost:4000"
+            : "https://videodownloader-im1g.onrender.com";
 
         const res = await fetch(`${backend}/info?url=${encodeURIComponent(url)}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
 
+        // ✅ Populate preview UI
         document.getElementById('title').textContent = data.title;
         document.getElementById('thumb').src = data.thumbnail;
-        document.getElementById('channel').textContent = data.channel;
-        document.getElementById('duration').textContent = data.duration;
+        document.getElementById('channel').textContent = `Channel: ${data.channel}`;
+        document.getElementById('duration').textContent = `Duration: ${data.duration}`;
 
         preview.style.display = 'block';
       } catch (err) {
-        errorBox.textContent = err.message;
+        errorBox.textContent = `⚠️ ${err.message}`;
         errorBox.style.display = 'block';
-        preview.style.display = 'none';
       } finally {
         spinner.style.display = 'none';
       }
     }
+
 
     function download(type) {
       const url = document.getElementById('url').value;
