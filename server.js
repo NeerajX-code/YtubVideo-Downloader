@@ -107,11 +107,17 @@ app.get("/download", downloadLimiter, async (req, res) => {
   try {
     const rawUrl = decodeURIComponent(req.query.url);
     const url = normalizeYouTubeUrl(rawUrl);
+    console.log("Decoded URL:", decodedUrl);
+    console.log("Normalized URL:", rawUrl);
     const itag = req.query.quality;
     const type = req.query.type || "video";
 
     if (!ytdl.validateURL(url))
-      return res.status(400).send("Invalid YouTube URL");
+      return res.status(400).json({
+    message:"Invalid Message",
+    decodedUrl:rawUrl,
+    cleanUrl:url
+  });
 
     const info = await ytdl.getInfo(url);
     const title = sanitize(info.videoDetails.title);
