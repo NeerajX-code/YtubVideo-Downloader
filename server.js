@@ -41,9 +41,6 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(cors());
-app.use(express.static(path.join(__dirname, "public")));
-app.set("view engine", "ejs");
-app.set("views", path.join(__dirname, "views"));
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*"); // or set specific domain
@@ -74,9 +71,6 @@ function sanitize(title) {
   return title.replace(/[^a-zA-Z0-9_\-\. ]/g, "");
 }
 
-app.get("/", (req, res) => {
-  res.render("index");
-});
 
 app.get("/info", infoLimiter, async (req, res) => {
   try {
