@@ -14,27 +14,26 @@ require("dotenv").config();
 
 // Global limiter (apply to all routes)
 const globalLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,  // 1 minute
-  max: 100,                 // Max 100 requests per IP per minute
-  standardHeaders: true,   // Return rate limit info in headers
-  legacyHeaders: false,    // Disable `X-RateLimit-*` headers
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // Max 100 requests per IP per minute
+  standardHeaders: true, // Return rate limit info in headers
+  legacyHeaders: false, // Disable `X-RateLimit-*` headers
 });
 
 // Specific tighter limiter for downloads
 const downloadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  max: 10,                   // Max 10 downloads per IP per 15 minutes
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Max 10 downloads per IP per 15 minutes
   message: "Too many downloads from this IP, please try again later.",
 });
 
 const infoLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100,            // Max 100 requests per IP
+  max: 100, // Max 100 requests per IP
   message: "Too many requests to /info, please try again in a minute.",
   standardHeaders: true,
   legacyHeaders: false,
 });
-
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -46,11 +45,16 @@ app.use(express.static(path.join(__dirname, "public")));
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*"); // or set specific domain
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
 
 // Apply global limiter to all routes
 app.use(globalLimiter);
 app.set("trust proxy", 1);
-
 
 const QUALITY_MAP = {
   360: { itag: "18", videoAndAudio: true },
@@ -74,12 +78,13 @@ app.get("/", (req, res) => {
   res.render("index");
 });
 
-app.get("/info",infoLimiter, async (req, res) => {
+app.get("/info", infoLimiter, async (req, res) => {
   try {
-    const rawUrl = normalizeYouTubeUrl(req.query.url);
-    if (!ytdl.validateURL(rawUrl)) return res.status(400).send("Invalid URL");
+    const rawUrl = decodeURIComponent(req.query.url);
+    const url = normalizeYouTubeUrl(rawUrl);
+    if (!ytdl.validateURL(url)) return res.status(400).send("Invalid URL");
 
-    const info = await ytdl.getInfo(rawUrl);
+    const info = await ytdl.getInfo(url);
     const details = info.videoDetails;
 
     res.json({
@@ -98,27 +103,36 @@ app.get("/info",infoLimiter, async (req, res) => {
 
 //we added here downloadLimiter middleware.
 
-app.get("/download",downloadLimiter, async (req, res) => {
+app.get("/download", downloadLimiter, async (req, res) => {
   try {
-    const rawUrl = normalizeYouTubeUrl(req.query.url);
+    const rawUrl = decodeURIComponent(req.query.url);
+    const url = normalizeYouTubeUrl(rawUrl);
     const itag = req.query.quality;
     const type = req.query.type || "video";
 
-    if (!ytdl.validateURL(rawUrl)) return res.status(400).send("Invalid YouTube URL");
+    if (!ytdl.validateURL(url))
+      return res.status(400).send("Invalid YouTube URL");
 
-    const info = await ytdl.getInfo(rawUrl);
+    const info = await ytdl.getInfo(url);
     const title = sanitize(info.videoDetails.title);
-    const format = info.formats.find(f => f.itag.toString() === itag);
+    const format = info.formats.find((f) => f.itag.toString() === itag);
 
-    if (!format && type !== "audio") return res.status(400).send("Unsupported quality or itag.");
+    if (!format && type !== "audio")
+      return res.status(400).send("Unsupported quality or itag.");
 
-    res.setHeader("Content-Disposition", `attachment; filename=\"${title}.${type === 'audio' ? 'mp3' : 'mp4'}\"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=\"${title}.${type === "audio" ? "mp3" : "mp4"}\"`
+    );
 
     const tempDir = path.resolve(__dirname, "temp");
     fs.mkdirSync(tempDir, { recursive: true });
 
     if (type === "audio") {
-      const audioStream = ytdl(rawUrl, { filter: "audioonly", quality: "highestaudio" });
+      const audioStream = ytdl(url, {
+        filter: "audioonly",
+        quality: "highestaudio",
+      });
       res.setHeader("Content-Type", "audio/mpeg");
       return pipeline(audioStream, res, (err) => {
         if (err) console.error("Audio stream error:", err);
@@ -126,7 +140,7 @@ app.get("/download",downloadLimiter, async (req, res) => {
     }
 
     if (format.hasVideo && format.hasAudio) {
-      const stream = ytdl(rawUrl, { quality: itag });
+      const stream = ytdl(url, { quality: itag });
       res.setHeader("Content-Type", "video/mp4");
       return pipeline(stream, res, (err) => {
         if (err) console.error("Video stream error:", err);
@@ -139,8 +153,18 @@ app.get("/download",downloadLimiter, async (req, res) => {
     const outputPath = path.join(tempDir, `${title}_${unique}_merged.mp4`);
 
     await Promise.all([
-      new Promise((res, rej) => ytdl(rawUrl, { quality: itag }).pipe(fs.createWriteStream(videoPath)).on('finish', res).on('error', rej)),
-      new Promise((res, rej) => ytdl(rawUrl, { filter: 'audioonly' }).pipe(fs.createWriteStream(audioPath)).on('finish', res).on('error', rej))
+      new Promise((res, rej) =>
+        ytdl(url, { quality: itag })
+          .pipe(fs.createWriteStream(videoPath))
+          .on("finish", res)
+          .on("error", rej)
+      ),
+      new Promise((res, rej) =>
+        ytdl(url, { filter: "audioonly" })
+          .pipe(fs.createWriteStream(audioPath))
+          .on("finish", res)
+          .on("error", rej)
+      ),
     ]);
 
     ffmpeg()
@@ -157,16 +181,19 @@ app.get("/download",downloadLimiter, async (req, res) => {
 
         const readStream = fs.createReadStream(outputPath);
         pipeline(readStream, res, (err) => {
-          [videoPath, audioPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+          [videoPath, audioPath, outputPath].forEach(
+            (p) => fs.existsSync(p) && fs.unlinkSync(p)
+          );
           if (err) console.error("Streaming final video failed:", err);
         });
       })
       .on("error", (err) => {
         console.error("FFmpeg error:", err);
-        [videoPath, audioPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+        [videoPath, audioPath, outputPath].forEach(
+          (p) => fs.existsSync(p) && fs.unlinkSync(p)
+        );
         res.status(500).send("Failed to merge video and audio");
       });
-
   } catch (err) {
     console.error("/download error:", err);
     res.status(500).send("Server error during download");
